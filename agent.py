@@ -97,5 +97,8 @@ agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True, memory=me
 # Step 8: Run Agent
 def run_agent(query):
     time.sleep(2)  # Rate limit mitigation
-    response = agent_executor.invoke({"input": query})
+    response = agent_executor.invoke({
+        "input": query,
+        "tools": tools
+    })
     return response["output"]
