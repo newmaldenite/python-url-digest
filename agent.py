@@ -1,101 +1,112 @@
 # agent.py
 
-from langchain_mistralai import ChatMistralAI
 from langchain.agents import Tool, AgentExecutor, create_tool_calling_agent
 from langchain.memory import ConversationBufferMemory
-from langchain_core.messages import SystemMessage
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.prompts import PromptTemplate, MessagesPlaceholder
+from langchain.prompts import MessagesPlaceholder
+from langchain_mistralai import ChatMistralAI
 
 import os
-import time
 from dotenv import load_dotenv
 
 load_dotenv()
 
 # Step 1: Initialize Mistral LLM
 llm = ChatMistralAI(
-    model="mistral-large-latest",
+    model="mistral-small-latest",
     mistral_api_key=os.getenv("MISTRAL_API_KEY"),
-    temperature=0.7,
-    model_kwargs={"max_tokens": 500}
+    temperature=0.7
 )
 
-# Step 2: Define Game State
-class GameState:
-    def __init__(self):
-        self.location = "dungeon_entrance"
-        self.inventory = []
-        self.monsters = {
-            "dungeon_entrance": ["Thunderbeak Wyvern"],
-            "hallway": ["Shadowy Skeleton"]
-        }
+# ----------------------
+# Custom Tool: Narrative Generator
+# ----------------------
+def generate_narrative(input_text):
+    """
+    This function is called by the agent to generate story content,
+    descriptions, encounters, or resolve actions based on player input.
+    """
+    # Define the prompt for the LLM
+    prompt = f"""
+You are The ForestMaster, a fun and engaging Dungeon Master guiding a player through a mystical forest adventure.
 
-    def move_to(self, location):
-        if location in self.monsters:
-            self.location = location
-            return f"You moved to {location}."
-        return f"You can't go to {location}."
+Your current objective is: To lead a single player through a dynamic, narrative-driven journey in a mysterious forest, encouraging exploration, decision-making, and character development.
 
-    def get_monsters_in_current_location(self):
-        return self.monsters.get(self.location, [])
+Traits:
+- Imaginative
+- Responsive
+- Descriptive
+- Adaptive to player choices
+- Encouraging of creative solutions
 
-game_state = GameState()
+Constraints:
+- The player begins in a clearing in the center of the forest.
+- The player can move in any direction (north, south, east, west, or explore points of interest).
+- Each location should present atmosphere, potential encounters, and narrative intrigue.
+- Trials must focus on testing the player’s connection with nature—this could involve empathy, intuition, survival instincts, or moral dilemmas.
+- Encounters may include friendly or hostile characters/creatures typical of fantasy RPGs (e.g., elves, goblins, spirits, talking animals, druids).
+- All combat must be resolvable via dialogue and strategy—describe opponents' behaviors or fighting styles clearly so players can exploit weaknesses.
+- Use vivid but concise fantasy-style descriptions; keep tone light and engaging.
 
-# Step 3: Define Tools
-def move_tool(location: str) -> str:
-    return game_state.move_to(location)
+Player Input: {input_text}
 
-def list_monsters_tool(_) -> str:
-    monsters = game_state.get_monsters_in_current_location()
-    if monsters:
-        return "Monsters here: " + ", ".join(monsters)
-    return "No monsters here."
+Respond in character as ForestMaster. Describe what happens next in the game world.
+"""
+    response = llm.invoke(prompt)
+    return response.content
 
-tools = [
-    Tool(
-        name="MoveToLocation",
-        func=move_tool,
-        description="Move the player to a new location in the game world."
-    ),
-    Tool(
-        name="ListMonsters",
-        func=list_monsters_tool,
-        description="List all monsters in the current location."
-    )
-]
+# Wrap the function into a Tool
+narrative_tool = Tool(
+    name="NarrativeGenerator",
+    func=generate_narrative,
+    description="Generates immersive narrative responses as the Dungeon Master based on player input."
+)
 
-# Step 4: Create Prompt with Tool Calling Support
+# ----------------------
+# Initialize Agent
+# ----------------------
+
+
+tools = [narrative_tool]
+
+# Define system prompt
 system_prompt = """
-You are the Dungeon Master AI. Your role is to:
-1. Use the 'MoveToLocation' tool when the player wants to explore.
-2. Use the 'ListMonsters' tool to show enemies in the current area.
-3. Describe the world dynamically based on the player's actions.
+You are ForestMaster, a Dungeon Master guiding a player through a fantasy forest adventure.
 
-TOOLS:
------
-{tools}
+Use the NarrativeGenerator tool to describe locations, encounters, and outcomes.
+Maintain a light and vivid storytelling style.
 
-Begin!
+Do NOT mention any internal processes or tools directly to the player.
+
+Chat History: {chat_history}
+Agent Scratchpad: {agent_scratchpad}
+Player Input: {input}
 """
 
-prompt = ChatPromptTemplate.from_messages([
-    ("system", system_prompt),
-    MessagesPlaceholder(variable_name="chat_history"),
-    ("human", "{input}"),
-    MessagesPlaceholder(variable_name="agent_scratchpad")
-])
+# Wrap it in a PromptTemplate
+prompt = PromptTemplate.from_template(system_prompt).partial(
+    chat_history=MessagesPlaceholder(variable_name="chat_history")
+)
 
-# Step 5: Create Agent with Tool Calling Support
-agent = create_tool_calling_agent(llm, tools, prompt)
-
-# Step 6: Initialize Memory
+# Set up memory
 memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
 
-# Step 7: Create AgentExecutor with Memory
-agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True, memory=memory)
+# Create agent
+agent = create_tool_calling_agent(llm, tools, prompt)
+agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=False, memory=memory)
 
-# Step 8: Run Agent
-def run_agent(query):
-    time.sleep(2)  # Rate limit mitigation
-    response = agent_executor.invoke({"input": query})
-    return response["output"]
+# ----------------------
+# Start the Adventure!
+# ----------------------
+
+print("🌲 Welcome to the Mysterious Forest!\n")
+print("You find yourself standing in a quiet clearing surrounded by ancient trees. Sunlight filters through the canopy above.\n")
+print("Which direction would you like to go? North, South, East, West... or explore something nearby?\n")
+
+while True:
+    user_input = input("You: ")
+    if user_input.lower() in ["exit", "quit"]:
+        print("🌲 Thanks for playing!")
+        break
+    response = agent_executor.invoke({"input": user_input})
+    print(f"ForestMaster: {response['output']}\n")
